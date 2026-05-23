@@ -13,7 +13,12 @@ const previewCanvas = document.getElementById("previewCanvas");
 const previewCtx = previewCanvas.getContext("2d");
 const videoPreviewCanvas = document.getElementById("videoPreviewCanvas");
 const videoPreviewCtx = videoPreviewCanvas.getContext("2d");
+const livePhotoPreviewContainer = document.getElementById("livePhotoPreviewContainer");
 let videoPreviewRafId = null;
+let isLivePhotoMode = false;
+let livePhotoPlayer = null;
+let livePhotoPhotoUrl = null;
+let livePhotoVideoUrl = null;
 
 const fileNameEl = document.getElementById("fileName");
 const loadingOverlay = document.getElementById("loadingOverlay");
@@ -234,6 +239,7 @@ function switchToVideoMode() {
   imageCanvasWrap.style.display = "none";
   videoPlayerContainer.style.display = "flex";
   videoPlayer.style.display = "block";
+  livePhotoPreviewContainer.style.display = "none";
 
   imageCropSizeControl.style.display = "none";
   imageCornerControl.style.display = "none";
@@ -257,6 +263,7 @@ function switchToImageMode() {
   imageCanvasWrap.style.display = "block";
   videoPlayerContainer.style.display = "none";
   videoPlayer.style.display = "none";
+  livePhotoPreviewContainer.style.display = "none";
 
   imageCropSizeControl.style.display = "";
   imageCornerControl.style.display = "";
@@ -366,6 +373,7 @@ function nudgeVideoToFirstFrame() {
 function resetAllState() {
   stopVideoRaf();
   releaseVideoPreviewSource();
+  resetLivePhotoPreview();
 
   imageLoaded = false;
   rotation = 0;
@@ -652,7 +660,8 @@ document.addEventListener("pointermove", (e) => {
 });
 
 document.addEventListener("pointerup", () => {
-  const wasDraggingTrim = isVideoMode && (isDraggingTrimStart || isDraggingTrimEnd);
+  const wasDraggingTrim =
+    isVideoMode && (isDraggingTrimStart || isDraggingTrimEnd);
   if (
     wasDraggingTrim &&
     !videoPlayer.paused &&
@@ -687,18 +696,96 @@ function isZipFile(file) {
   );
 }
 
-uploadInput.addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  e.target.value = "";
-  if (isZipFile(file)) processZipFile(file);
-  else if (isVideoFile(file)) {
-    clearZipGallery();
-    processVideoFile(file);
-  } else {
-    clearZipGallery();
-    processFile(file);
+function getFileBaseName(file) {
+  return file.name.replace(/\.[^/.]+$/, "");
+}
+
+function findLivePhotoPair(files) {
+  const photos = files.filter((file) => /\.(jpe?g)$/i.test(file.name));
+  const videos = files.filter((file) => /\.mov$/i.test(file.name));
+  if (photos.length === 0 || videos.length === 0) return null;
+
+  for (const photo of photos) {
+    const match = videos.find(
+      (video) =>
+        getFileBaseName(video).toLowerCase() ===
+        getFileBaseName(photo).toLowerCase(),
+    );
+    if (match) return { photo, video: match };
   }
+
+  if (photos.length === 1 && videos.length === 1) {
+    return { photo: photos[0], video: videos[0] };
+  }
+  return null;
+}
+
+async function handleUploadFiles(fileList) {
+  const files = Array.from(fileList).filter(Boolean);
+  if (files.length === 0) return;
+
+  const livePhotoPair = findLivePhotoPair(files);
+  if (livePhotoPair) {
+    clearZipGallery();
+    resetAllState();
+    originalFileName = getFileBaseName(livePhotoPair.photo) || "live-photo";
+    fileNameEl.textContent = originalFileName;
+    fileNameEl.style.display = "block";
+    downloadBtn.disabled = true;
+    setupLivePhotoPreview(livePhotoPair.photo, livePhotoPair.video);
+    try {
+      await loadBlobIntoImage(livePhotoPair.photo);
+      imageLoaded = true;
+      prepareCanvasForImage();
+      resetCircle();
+      draw();
+      downloadBtn.disabled = false;
+      setActiveTab("edit");
+      updatePreviewIfVisible();
+    } catch (err) {
+      console.error("Live Photo image failed:", err);
+      drawMessage("Could not load Live Photo image");
+    }
+    return;
+  }
+
+  if (files.length === 1) {
+    const file = files[0];
+    if (isZipFile(file)) processZipFile(file);
+    else if (isVideoFile(file)) {
+      clearZipGallery();
+      processVideoFile(file);
+    } else {
+      clearZipGallery();
+      processFile(file);
+    }
+    return;
+  }
+
+  const zipFile = files.find(isZipFile);
+  if (zipFile) {
+    processZipFile(zipFile);
+    return;
+  }
+
+  const videoFile = files.find(isVideoFile);
+  if (videoFile) {
+    clearZipGallery();
+    processVideoFile(videoFile);
+    return;
+  }
+
+  const imageFile = files.find((file) => IMAGE_EXTENSIONS.test(file.name));
+  if (imageFile) {
+    clearZipGallery();
+    processFile(imageFile);
+    return;
+  }
+}
+
+uploadInput.addEventListener("change", (e) => {
+  handleUploadFiles(e.target.files);
+  e.target.value = "";
 });
 
 document.addEventListener("paste", (e) => {
@@ -727,16 +814,7 @@ uploadBox.addEventListener("dragleave", () => {
 uploadBox.addEventListener("drop", (e) => {
   e.preventDefault();
   uploadBox.classList.remove("drag-over");
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  if (isZipFile(file)) processZipFile(file);
-  else if (isVideoFile(file)) {
-    clearZipGallery();
-    processVideoFile(file);
-  } else {
-    clearZipGallery();
-    processFile(file);
-  }
+  handleUploadFiles(e.dataTransfer.files);
 });
 
 async function processZipFile(file) {
@@ -1736,6 +1814,10 @@ function draw() {
 }
 
 function drawPreview() {
+  if (isLivePhotoMode) {
+    drawLivePhotoPreview();
+    return;
+  }
   if (isVideoMode) {
     drawVideoPreview();
     return;
@@ -1750,6 +1832,43 @@ function drawPreview() {
   previewCtx.drawImage(out, 0, 0, previewCanvas.width, previewCanvas.height);
 }
 
+function drawLivePhotoPreview() {
+  stopVideoPreviewLoop();
+  if (!livePhotoPreviewContainer || !livePhotoPhotoUrl || !livePhotoVideoUrl) {
+    livePhotoPreviewContainer.style.display = "none";
+    previewCanvas.style.display = "block";
+    drawPreviewPlaceholder();
+    return;
+  }
+
+  previewCanvas.style.display = "none";
+  videoPreviewCanvas.style.display = "none";
+  livePhotoPreviewContainer.style.display = "block";
+
+  if (window.LivePhotosKit && typeof LivePhotosKit.Player === "function") {
+    if (!livePhotoPlayer) {
+      const element = document.createElement("div");
+      element.dataset.livePhoto = "";
+      element.dataset.photoSrc = livePhotoPhotoUrl;
+      element.dataset.videoSrc = livePhotoVideoUrl;
+      element.dataset.proactivelyLoadsVideo = "true";
+      element.dataset.showsNativeControls = "true";
+      element.style.width = "100%";
+      element.style.height = "100%";
+      livePhotoPreviewContainer.innerHTML = "";
+      livePhotoPreviewContainer.appendChild(element);
+      livePhotoPlayer = LivePhotosKit.Player(element);
+      if (LivePhotosKit.PlaybackStyle?.FULL) {
+        livePhotoPlayer.playbackStyle = LivePhotosKit.PlaybackStyle.FULL;
+      }
+    }
+  } else {
+    livePhotoPreviewContainer.style.display = "none";
+    previewCanvas.style.display = "block";
+    drawPreviewPlaceholder();
+  }
+}
+
 function startVideoPreviewLoop() {
   stopVideoPreviewLoop();
   videoPreviewCanvas.style.display = "block";
@@ -1760,7 +1879,10 @@ function startVideoPreviewLoop() {
 
   videoPreviewCanvas.width = 512;
   videoPreviewCanvas.height = 512;
-  if (!videoPreviewCanvas._previewSrc || videoPreviewCanvas._previewBlob !== videoBlob) {
+  if (
+    !videoPreviewCanvas._previewSrc ||
+    videoPreviewCanvas._previewBlob !== videoBlob
+  ) {
     if (videoPreviewCanvas._previewSrc) {
       URL.revokeObjectURL(videoPreviewCanvas._previewSrc);
     }
@@ -1864,6 +1986,54 @@ function releaseVideoPreviewSource() {
   videoPreviewCanvas._previewBlob = null;
 }
 
+function resetLivePhotoPreview() {
+  isLivePhotoMode = false;
+  if (livePhotoPlayer && typeof livePhotoPlayer.remove === "function") {
+    livePhotoPlayer.remove();
+  }
+  livePhotoPlayer = null;
+  livePhotoPreviewContainer.innerHTML = "";
+  livePhotoPreviewContainer.style.display = "none";
+  if (livePhotoPhotoUrl) {
+    URL.revokeObjectURL(livePhotoPhotoUrl);
+    livePhotoPhotoUrl = null;
+  }
+  if (livePhotoVideoUrl) {
+    URL.revokeObjectURL(livePhotoVideoUrl);
+    livePhotoVideoUrl = null;
+  }
+}
+
+function setupLivePhotoPreview(photoFile, videoFile) {
+  resetLivePhotoPreview();
+  isLivePhotoMode = true;
+  livePhotoPhotoUrl = URL.createObjectURL(photoFile);
+  livePhotoVideoUrl = URL.createObjectURL(videoFile);
+  livePhotoPreviewContainer.style.display = "block";
+  previewCanvas.style.display = "none";
+  videoPreviewCanvas.style.display = "none";
+
+  if (window.LivePhotosKit && typeof LivePhotosKit.Player === "function") {
+    const element = document.createElement("div");
+    element.dataset.livePhoto = "";
+    element.dataset.photoSrc = livePhotoPhotoUrl;
+    element.dataset.videoSrc = livePhotoVideoUrl;
+    element.dataset.proactivelyLoadsVideo = "true";
+    element.dataset.showsNativeControls = "true";
+    element.style.width = "100%";
+    element.style.height = "100%";
+    livePhotoPreviewContainer.innerHTML = "";
+    livePhotoPreviewContainer.appendChild(element);
+    livePhotoPlayer = LivePhotosKit.Player(element);
+    if (LivePhotosKit.PlaybackStyle?.FULL) {
+      livePhotoPlayer.playbackStyle = LivePhotosKit.PlaybackStyle.FULL;
+    }
+  } else {
+    livePhotoPreviewContainer.style.display = "none";
+    previewCanvas.style.display = "block";
+  }
+}
+
 function drawVideoPreview() {
   startVideoPreviewLoop();
 }
@@ -1888,29 +2058,39 @@ function drawPreviewPlaceholder() {
 function seekVideoTo(video, time) {
   return new Promise((resolve, reject) => {
     const targetTime = Math.max(0, time);
-    const finish = () => {
+    if (Math.abs(video.currentTime - targetTime) < 0.02) {
+      resolve();
+      return;
+    }
+
+    const onSeeked = () => {
       cleanup();
       resolve();
     };
-    const fail = () => {
+    const onError = () => {
       cleanup();
       reject(new Error("Could not seek video"));
     };
+    const onTimeout = () => {
+      cleanup();
+      reject(new Error("Video seek timeout"));
+    };
     const cleanup = () => {
       clearTimeout(timeoutId);
-      video.removeEventListener("seeked", finish);
-      video.removeEventListener("error", fail);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
     };
-    const timeoutId = setTimeout(finish, 1000);
+    const timeoutId = setTimeout(onTimeout, 2000);
 
-    video.addEventListener("seeked", finish, { once: true });
-    video.addEventListener("error", fail, { once: true });
+    video.addEventListener("seeked", onSeeked, { once: true });
+    video.addEventListener("error", onError, { once: true });
 
-    if (Math.abs(video.currentTime - targetTime) < 0.02) {
-      finish();
-      return;
+    try {
+      video.currentTime = targetTime;
+    } catch (err) {
+      cleanup();
+      reject(err);
     }
-    video.currentTime = targetTime;
   });
 }
 
@@ -1928,13 +2108,9 @@ function getVideoExportMimeType() {
     "video/webm",
   ];
 
-  const requestedTypes =
-    choice === "webm" ? webmTypes : mp4Types;
-  const fallbackTypes = [];
+  const requestedTypes = choice === "webm" ? webmTypes : mp4Types;
   const mimeType =
-    requestedTypes.find((m) => MediaRecorder.isTypeSupported(m)) ||
-    fallbackTypes.find((m) => MediaRecorder.isTypeSupported(m)) ||
-    "";
+    requestedTypes.find((m) => MediaRecorder.isTypeSupported(m)) || "";
 
   return {
     mimeType,
@@ -2003,6 +2179,10 @@ async function exportVideo() {
   showLoading("Preparing export…");
 
   let activeAudioCtx = null;
+  const originalPlaybackRate = videoPlayer.playbackRate;
+  const originalVolume = videoPlayer.volume;
+  const originalMuted = videoPlayer.muted;
+  const originalCurrentTime = videoPlayer.currentTime;
 
   try {
     const vw = videoPlayer.videoWidth;
@@ -2017,6 +2197,7 @@ async function exportVideo() {
     const srcY = Math.max(0, cy - cropRadius);
     const srcSize = cropRadius * 2;
     const outSize = Math.round(srcSize);
+    if (outSize <= 0) throw new Error("Invalid crop size");
 
     const offscreen = document.createElement("canvas");
     offscreen.width = outSize;
@@ -2028,10 +2209,8 @@ async function exportVideo() {
       throw new Error("This browser does not support video recording export.");
     }
 
-    // Mix canvas video stream with extracted, gain-adjusted audio stream
-    let finalStream = new MediaStream(
-      offscreen.captureStream(30).getVideoTracks(),
-    );
+    const videoStream = offscreen.captureStream(30);
+    const finalStream = new MediaStream(videoStream.getVideoTracks());
 
     try {
       if (!videoPlayer.muted && videoPlayer.volume > 0) {
@@ -2050,7 +2229,8 @@ async function exportVideo() {
           const dest = activeAudioCtx.createMediaStreamDestination();
           source.connect(gainNode);
           gainNode.connect(dest);
-          finalStream.addTrack(dest.stream.getAudioTracks()[0]);
+          const audioTrack = dest.stream.getAudioTracks()[0];
+          if (audioTrack) finalStream.addTrack(audioTrack);
         }
       }
     } catch (err) {
@@ -2063,7 +2243,7 @@ async function exportVideo() {
     });
     const chunks = [];
     recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
+      if (e.data && e.data.size > 0) chunks.push(e.data);
     };
     const recorderStopped = new Promise((resolve) => {
       recorder.onstop = resolve;
@@ -2073,28 +2253,28 @@ async function exportVideo() {
     videoPlayer.pause();
     await seekVideoTo(videoPlayer, trimStartTime);
 
+    videoPlayer.playbackRate = 1;
+    videoPlayer.volume = originalVolume;
+    videoPlayer.muted = originalMuted;
+
     recorder.start(100);
-    videoPlayer.playbackRate = videoSpeed;
     await videoPlayer.play().catch(() => {});
 
     loadingText.textContent = "Recording… 0%";
 
     await new Promise((resolve, reject) => {
-      let rafId;
-      function renderFrame() {
-        if (!isVideoMode) {
-          cancelAnimationFrame(rafId);
-          reject(new Error("Cancelled"));
-          return;
-        }
+      let finished = false;
+      const clampProgress = (value) => Math.min(Math.max(value, 0), 1);
+
+      const drawFrame = () => {
+        if (finished) return;
+
         const elapsed = videoPlayer.currentTime - trimStartTime;
-        const progress = Math.min(elapsed / duration, 1);
+        const progress = clampProgress(elapsed / duration);
         loadingText.textContent =
           "Recording… " + Math.round(progress * 100) + "%";
 
         offCtx.clearRect(0, 0, outSize, outSize);
-
-        // Fill selected background
         if (selectedBackground !== "transparent") {
           offCtx.fillStyle = selectedBackground;
           offCtx.fillRect(0, 0, outSize, outSize);
@@ -2117,8 +2297,8 @@ async function exportVideo() {
         );
         offCtx.restore();
 
-        if (videoPlayer.currentTime >= trimEndTime - 0.05 || progress >= 1) {
-          cancelAnimationFrame(rafId);
+        if (videoPlayer.currentTime >= trimEndTime - 0.04 || progress >= 1) {
+          finished = true;
           videoPlayer.pause();
           setTimeout(() => {
             recorder.stop();
@@ -2126,9 +2306,15 @@ async function exportVideo() {
           }, 200);
           return;
         }
-        rafId = requestAnimationFrame(renderFrame);
-      }
-      rafId = requestAnimationFrame(renderFrame);
+
+        if (typeof videoPlayer.requestVideoFrameCallback === "function") {
+          videoPlayer.requestVideoFrameCallback(() => drawFrame());
+        } else {
+          requestAnimationFrame(drawFrame);
+        }
+      };
+
+      drawFrame();
     });
 
     await recorderStopped;
@@ -2141,9 +2327,7 @@ async function exportVideo() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
 
-    videoPlayer.playbackRate = videoSpeed;
     videoPlayer.currentTime = trimStartTime;
-    videoPlayer.play().catch(() => {});
   } catch (err) {
     console.error(err);
     alert("Video export failed: " + err.message);
@@ -2153,6 +2337,10 @@ async function exportVideo() {
     if (activeAudioCtx && activeAudioCtx.state !== "closed") {
       activeAudioCtx.close().catch(console.error);
     }
+    videoPlayer.volume = originalVolume;
+    videoPlayer.muted = originalMuted;
+    videoPlayer.playbackRate = originalPlaybackRate;
+    videoPlayer.currentTime = originalCurrentTime;
   }
 }
 

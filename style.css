@@ -1278,17 +1278,17 @@ select:focus {
   position: relative;
   width: 100%;
   height: 24px;
-  border-radius: 999px;
+  border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
-
+  
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.12),
     rgba(255, 255, 255, 0.06)
-  );
+    );
 
-  margin-top: 0;
+    margin-top: 0;
 }
 
 .timeline-progress-bar {
@@ -1299,11 +1299,13 @@ select:focus {
   top: 0;
   bottom: 0;
   z-index: 4;
+  border-radius: 5px;
   box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
 .timeline-active-range {
   position: absolute;
+  border-radius: 5px;
   top: 0;
   bottom: 0;
   background: rgba(99, 102, 241, 0.25);
@@ -1315,6 +1317,7 @@ select:focus {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
+  border-radius: 2.5px;
   width: 8px;
   height: 100%;
   background: rgba(7, 2, 2, 0.9);
@@ -1323,17 +1326,18 @@ select:focus {
   box-shadow: 0 0 8px rgba(99, 102, 241, 0.8);
 }
 
-/* odstránenie bieleho držadla */
 .timeline-handle::before {
   display: none;
 }
 
 .timeline-handle-start {
   transform: translate(-50%, -50%);
+  margin-left: 2px
 }
 
 .timeline-handle-end {
   transform: translate(-50%, -50%);
+  margin-right: 2px
 }
 
 .video-right-controls {
@@ -1618,14 +1622,20 @@ select:focus {
   border-color: rgba(34, 197, 94, 0.38);
 }
 
-:root[data-theme="light"] .timeline-handle {
+:root[data-theme="dark"] .timeline-handle {
   background: #ffffff;
   border-color: rgba(14, 165, 233, 0.86);
   box-shadow: 0 4px 14px rgba(14, 165, 233, 0.28);
 }
 
+:root[data-theme="light"] .timeline-handle {
+  background: #363636;
+  border-color: rgba(14, 165, 233, 0.86);
+  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.28);
+}
+
 :root[data-theme="green"] .timeline-handle {
-  background: #ffffff;
+  background: #363636;
   border-color: rgba(34, 197, 94, 0.86);
   box-shadow: 0 4px 14px rgba(34, 197, 94, 0.26);
 }

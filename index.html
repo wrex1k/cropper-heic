@@ -91,6 +91,7 @@
               <div class="preview-wrap">
                 <canvas id="previewCanvas" width="512" height="512"></canvas>
                 <canvas id="videoPreviewCanvas" style="display:none;"></canvas>
+                <div id="livePhotoPreviewContainer" style="display:none;width:512px;height:512px;min-width:250px;min-height:250px;"></div>
               </div>
             </section>
           </div>
@@ -113,11 +114,11 @@
             <label class="upload-box" for="upload" id="uploadBox">
               <div class="upload-icon">📁</div>
               <div class="upload-title">Choose photo, video or ZIP</div>
-              <div class="upload-hint">HEIC, HEIF, JPG, PNG, MP4, WebM, MOV, M4V or ZIP</div>
+              <div class="upload-hint">HEIC, HEIF, JPG, PNG, MP4, WebM, MOV, M4V or ZIP<br>Upload a JPG + MOV pair for Live Photo playback</div>
               <div class="upload-paste">or paste with Ctrl+V or ⌘+V</div>
               <div class="file-name" id="fileName"></div>
             </label>
-            <input type="file" id="upload"
+              <input type="file" id="upload" multiple
               accept="image/*,.heic,.heif,.heics,.heifs,.zip,application/zip,video/*,.mp4,.webm,.mov,.m4v,.heic,.heif" />
           </section>
 
@@ -150,9 +151,9 @@
               <label>Video Crop Overlay</label>
               <div class="control-row">
                 <label for="videoCropSize">Crop size</label>
-                <span class="value" id="videoCropSizeValue">85%</span>
+                <span class="value" id="videoCropSizeValue">100%</span>
               </div>
-              <input type="range" id="videoCropSize" min="25" max="100" value="85">
+              <input type="range" id="videoCropSize" min="25" max="100" value="100">
             </div>
 
             <div class="control">
@@ -260,6 +261,7 @@
   </footer>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js"></script>
+    <script src="https://cdn.apple-livephotoskit.com/lpk/1/livephotoskit.js"></script>
     <script src="script.js"></script>
 </body>
 
